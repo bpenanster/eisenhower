@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Eisenhower</title>
+<title>Tâches</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2C2C2A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tâches">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
 :root {
   --green-bg:#EAF3DE;--green-bd:#C0DD97;--green-tx:#27500A;
@@ -1117,6 +1124,10 @@ document.querySelectorAll('.modal-overlay').forEach(function(m){
 });
 
 renderRitual();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
 </script>
 </body>
 </html>
