@@ -1140,9 +1140,9 @@ function importFromClipboard() {
 
       var added = 0;
       lines.forEach(function(line){
-        // Parse rich format
-        var parts = line.split(' | ');
-        var title = parts[0].trim();
+        // Extract title — everything before first ' | '
+        var pipeIdx = line.indexOf(' | ');
+        var title = pipeIdx !== -1 ? line.slice(0, pipeIdx).trim() : line.trim();
         if (!title || existingTitles[title.toLowerCase()]) return;
 
         var task = {
@@ -1151,16 +1151,24 @@ function importFromClipboard() {
           createdAt: today(), updatedAt: today()
         };
 
-        // Parse optional fields
-        for (var i=1; i<parts.length; i++) {
-          var kv = parts[i].split(':');
-          if (kv.length < 2) continue;
-          var k = kv[0].trim(), v = kv.slice(1).join(':').trim();
-          if (k==='date' && v) task.targetDate = v.slice(0,10);
-          if (k==='urgent') task.urgent = v==='true'||v==='1';
-          if (k==='important') task.important = v==='true'||v==='1';
-          if (k==='notes' && v) task.infos = v;
-          if (k==='recurrence' && v) task.recurrence = v;
+        // Parse optional fields only if line has pipe-separated parts
+        if (pipeIdx !== -1) {
+          var rest = line.slice(pipeIdx + 3);
+          var parts = rest.split(' | ');
+          parts.forEach(function(part){
+            var kv = part.split(':');
+            if (kv.length < 2) return;
+            var k = kv[0].trim();
+            var v = kv.slice(1).join(':').trim();
+            if (!v || v==='' || v==='null' || v==='undefined') return;
+            if (k==='date') task.targetDate = v.slice(0,10);
+            if (k==='important') {
+              // iOS returns "Aucune", "Faible", "Moyenne", "Haute"
+              task.important = (v==='Haute'||v==='true'||v==='1');
+            }
+            if (k==='notes') task.infos = v;
+            if (k==='recurrence') task.recurrence = v;
+          });
         }
 
         tasks.push(task);
