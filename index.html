@@ -174,7 +174,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <span class="section-title">Taches</span>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Ajouter</button>
   </div>
-  <div style="font-size:11px;color:var(--text3);text-align:right;margin-bottom:8px">v1.5.1</div>
+  <div style="font-size:11px;color:var(--text3);text-align:right;margin-bottom:8px">v1.5.2</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
     <button class="btn btn-sm" onclick="exportData()">&#8595; Export fichier</button>
     <button class="btn btn-sm" onclick="exportToClipboard()">&#8595; Export clipboard</button>
@@ -1136,15 +1136,19 @@ function importFromClipboard() {
       var lines = text.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
       if (lines.length===0) { alert('Aucun rappel trouve.'); return; }
 
-      var existingTitles = {};
-      tasks.forEach(function(t){ existingTitles[t.title.toLowerCase()] = true; });
+      // Build dedup indexes: by reminderId (creation date) AND by title
+      var existingByReminderId = {};
+      var existingByTitle = {};
+      tasks.forEach(function(t){
+        if (t.reminderId) existingByReminderId[t.reminderId] = true;
+        existingByTitle[t.title.toLowerCase()] = true;
+      });
 
       var added = 0;
       lines.forEach(function(line){
-        // Extract title — everything before first '|'
         var pipeIdx = line.indexOf('|');
         var title = pipeIdx !== -1 ? line.slice(0, pipeIdx).trim() : line.trim();
-        if (!title || existingTitles[title.toLowerCase()]) return;
+        if (!title) return;
 
         var task = {
           id: uid(), title: title, infos: null, tags: [],
@@ -1152,7 +1156,7 @@ function importFromClipboard() {
           createdAt: today(), updatedAt: today()
         };
 
-        // Parse optional fields — split on | and process each segment
+        // Parse optional fields
         if (pipeIdx !== -1) {
           var segments = line.slice(pipeIdx+1).split('|');
           segments.forEach(function(seg){
@@ -1163,31 +1167,27 @@ function importFromClipboard() {
             var v = seg.slice(colonIdx+1).trim();
             if (!v || v==='' || v==='null' || v==='undefined' || v==='(null)') return;
             if (k==='date') {
-              // Full ISO 8601: 2026-05-08T09:30:00
               var isoFull = v.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-              if (isoFull) {
-                task.targetDate = isoFull[1];
-                if (isoFull[2] !== '00:00') task.targetTime = isoFull[2];
-                return;
-              }
-              // Date only: 2026-05-08
+              if (isoFull) { task.targetDate=isoFull[1]; if(isoFull[2]!=='00:00') task.targetTime=isoFull[2]; return; }
               var isoDate = v.match(/(\d{4}-\d{2}-\d{2})/);
-              if (isoDate) { task.targetDate = isoDate[1]; return; }
-              // French format fallback: "8 mai 2026 à 00:00"
-              var months = {'janv':1,'févr':2,'mars':3,'avr':4,'mai':5,'juin':6,'juil':7,'août':8,'sept':9,'oct':10,'nov':11,'déc':12};
-              var frMatch = v.match(/(\d+)\s+(\w+)\.?\s+(\d{4})(?:\s+à\s+(\d{2}:\d{2}))?/);
-              if (frMatch) {
-                var m = months[frMatch[2].toLowerCase().slice(0,4)];
-                if (m) {
-                  task.targetDate = frMatch[3]+'-'+String(m).padStart(2,'0')+'-'+String(frMatch[1]).padStart(2,'0');
-                  if (frMatch[4] && frMatch[4] !== '00:00') task.targetTime = frMatch[4];
-                }
-              }
+              if (isoDate) { task.targetDate=isoDate[1]; return; }
+              var months={'janv':1,'févr':2,'mars':3,'avr':4,'mai':5,'juin':6,'juil':7,'août':8,'sept':9,'oct':10,'nov':11,'déc':12};
+              var frMatch=v.match(/(\d+)\s+(\w+)\.?\s+(\d{4})(?:\s+à\s+(\d{2}:\d{2}))?/);
+              if (frMatch) { var m=months[frMatch[2].toLowerCase().slice(0,4)]; if(m){task.targetDate=frMatch[3]+'-'+String(m).padStart(2,'0')+'-'+String(frMatch[1]).padStart(2,'0');if(frMatch[4]&&frMatch[4]!=='00:00')task.targetTime=frMatch[4];} }
             }
-            if (k==='important') task.important = (v==='Haute'||v==='true'||v==='1'||v==='high');
-            if (k==='notes') task.infos = v;
+            if (k==='important') task.important=(v==='Haute'||v==='true'||v==='1'||v==='high');
+            if (k==='notes') task.infos=v;
+            if (k==='created') {
+              // Store as reminderId for future dedup
+              var createdIso = v.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+              if (createdIso) task.reminderId = createdIso[1];
+            }
           });
         }
+
+        // Dedup: skip if reminderId already exists, then fallback to title
+        if (task.reminderId && existingByReminderId[task.reminderId]) return;
+        if (!task.reminderId && existingByTitle[title.toLowerCase()]) return;
 
         tasks.push(task);
         added++;
