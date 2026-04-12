@@ -174,9 +174,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <span class="section-title">Taches</span>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Ajouter</button>
   </div>
-  <div style="display:flex;gap:8px;margin-bottom:14px">
-    <button class="btn btn-sm" style="flex:1" onclick="exportData()">Exporter</button>
-    <label class="btn btn-sm" style="flex:1;text-align:center;cursor:pointer;margin:0">Importer<input type="file" accept=".json" onchange="importData(event)" style="display:none"/></label>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+    <button class="btn btn-sm" onclick="exportData()">&#8595; Export fichier</button>
+    <button class="btn btn-sm" onclick="exportToClipboard()">&#8595; Export clipboard</button>
+    <label class="btn btn-sm" style="text-align:center;cursor:pointer;margin:0">&#8593; Import fichier<input type="file" accept=".json" onchange="importData(event)" style="display:none"/></label>
+    <button class="btn btn-sm" style="background:var(--teal-bg);border-color:var(--teal-bd);color:var(--teal-tx)" onclick="importFromClipboard()">&#8593; Sync Raccourci</button>
   </div>
   <div id="tasks-filter-bar" class="filter-bar"></div>
   <div id="tasks-content"></div>
@@ -1099,22 +1101,112 @@ function exportData() {
   a.href=url;a.download='eisenhower-'+today()+'.json';a.click();
   URL.revokeObjectURL(url);
 }
+
+function exportToClipboard() {
+  var json=JSON.stringify({tasks:tasks,archive:archive,tags:tags});
+  navigator.clipboard.writeText(json).then(function(){
+    alert('Donnees copiees dans le presse-papiers.');
+  });
+}
+
 function importData(event) {
   var file=event.target.files[0];
   if(!file)return;
   var reader=new FileReader();
   reader.onload=function(e){
     try{
-      var d=JSON.parse(e.target.result);
-      var t=Array.isArray(d)?d:(d.tasks||[]);
-      var a=Array.isArray(d)?[]:(d.archive||[]);
-      var tg=Array.isArray(d)?tags:(d.tags||tags);
-      if(!confirm('Importer '+t.length+' tache(s) ?'))return;
-      tasks=t;archive=a;tags=tg;
-      save();renderTasks();alert('Importation reussie.');
+      processImport(e.target.result);
     }catch(e){alert('Fichier invalide.');}
   };
   reader.readAsText(file);event.target.value='';
+}
+
+function importFromClipboard() {
+  navigator.clipboard.readText().then(function(text){
+    if (!text||!text.trim()) { alert('Presse-papiers vide. Lance d\'abord le Raccourci.'); return; }
+    try {
+      // Try JSON first (future full sync)
+      var d = JSON.parse(text);
+      processImport(text);
+    } catch(e) {
+      // Plain text format from simple Shortcut: one reminder per line
+      var lines = text.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
+      if (lines.length===0) { alert('Aucun rappel trouve dans le presse-papiers.'); return; }
+
+      // Find existing titles to avoid duplicates
+      var existingTitles = {};
+      tasks.forEach(function(t){ existingTitles[t.title.toLowerCase()] = true; });
+
+      var added = 0;
+      lines.forEach(function(line){
+        // Skip if already exists
+        if (existingTitles[line.toLowerCase()]) return;
+        tasks.push({
+          id: uid(),
+          title: line,
+          infos: null,
+          tags: [],
+          done: false,
+          status: 'todo',
+          postponeCount: 0,
+          createdAt: today(),
+          updatedAt: today()
+        });
+        added++;
+      });
+
+      if (added===0) {
+        alert('Aucun nouveau rappel — tout est deja dans l\'app.');
+      } else {
+        save();
+        showPage('ritual');
+        alert(added+' nouveau'+(added>1?'x':'')+' rappel'+(added>1?'s':'')+' importe'+(added>1?'s':'')+' — classe-les dans le rituel.');
+      }
+    }
+  }).catch(function(){
+    alert('Impossible de lire le presse-papiers. Verifie les permissions dans Reglages > Safari.');
+  });
+}
+
+function processImport(text) {
+  var d=JSON.parse(text);
+  // Handle both formats: raw array or {tasks, archive, tags}
+  var incoming=Array.isArray(d)?d:(d.tasks||[]);
+  var a=Array.isArray(d)?[]:(d.archive||[]);
+  var tg=Array.isArray(d)?tags:(d.tags||tags);
+
+  // Merge strategy: "le plus recent gagne" based on updatedAt or createdAt
+  var existingById={};
+  tasks.forEach(function(t){existingById[t.id]=t;});
+
+  var merged=tasks.slice();
+  var added=0, updated=0;
+
+  incoming.forEach(function(t){
+    if(!t.id) t.id=uid();
+    var existing=existingById[t.id];
+    if(!existing) {
+      // New task from Rappels — add it
+      merged.push(t);
+      added++;
+    } else {
+      // Conflict: compare dates, most recent wins
+      var incomingDate=t.updatedAt||t.createdAt||'';
+      var existingDate=existing.updatedAt||existing.createdAt||'';
+      if(incomingDate>existingDate) {
+        var idx=merged.findIndex(function(x){return x.id===t.id;});
+        if(idx!==-1) merged[idx]=t;
+        updated++;
+      }
+    }
+  });
+
+  if(!confirm('Ajouter '+added+' tache(s), mettre a jour '+updated+' ?'))return;
+  tasks=merged;
+  if(a.length>0) archive=a;
+  tags=tg;
+  save();renderTasks();
+  alert('Synchronisation terminee : '+added+' ajoutee(s), '+updated+' mise(s) a jour.');
 }
 
 // ── UTILS ─────────────────────────────────────────────────────
