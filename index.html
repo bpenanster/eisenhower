@@ -174,7 +174,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <span class="section-title">Taches</span>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Ajouter</button>
   </div>
-  <div style="font-size:11px;color:var(--text3);text-align:right;margin-bottom:8px">v1.4.0</div>
+  <div style="font-size:11px;color:var(--text3);text-align:right;margin-bottom:8px">v1.5.1</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
     <button class="btn btn-sm" onclick="exportData()">&#8595; Export fichier</button>
     <button class="btn btn-sm" onclick="exportToClipboard()">&#8595; Export clipboard</button>
@@ -766,7 +766,7 @@ function taskRow(t) {
     +'<div class="task-meta">'
     +(q?'<span class="q-badge '+q.toLowerCase()+'">'+q+'</span>':'<span style="font-size:11px;color:var(--text3)">Non classifiee</span>')
     +(t.duration?'<span>'+durLabel(t.duration)+'</span>':'')
-    +(t.targetDate?'<span>'+formatDate(t.targetDate)+'</span>':'')
+    +(t.targetDate?'<span>'+formatDate(t.targetDate)+(t.targetTime?' à '+t.targetTime:'')+'</span>':'')
     +(recLbl?'<span class="recurrence-badge">'+recLbl+'</span>':'')
     +(nextDate?'<span style="color:var(--text3)">Suivante : '+formatDate(nextDate)+'</span>':'')
     +(isEncours?'<span class="status-encours">En cours</span>':'')
@@ -1141,8 +1141,8 @@ function importFromClipboard() {
 
       var added = 0;
       lines.forEach(function(line){
-        // Extract title — everything before first ' | '
-        var pipeIdx = line.indexOf(' | ');
+        // Extract title — everything before first '|'
+        var pipeIdx = line.indexOf('|');
         var title = pipeIdx !== -1 ? line.slice(0, pipeIdx).trim() : line.trim();
         if (!title || existingTitles[title.toLowerCase()]) return;
 
@@ -1152,23 +1152,40 @@ function importFromClipboard() {
           createdAt: today(), updatedAt: today()
         };
 
-        // Parse optional fields only if line has pipe-separated parts
+        // Parse optional fields — split on | and process each segment
         if (pipeIdx !== -1) {
-          var rest = line.slice(pipeIdx + 3);
-          var parts = rest.split(' | ');
-          parts.forEach(function(part){
-            var kv = part.split(':');
-            if (kv.length < 2) return;
-            var k = kv[0].trim();
-            var v = kv.slice(1).join(':').trim();
-            if (!v || v==='' || v==='null' || v==='undefined') return;
-            if (k==='date') task.targetDate = v.slice(0,10);
-            if (k==='important') {
-              // iOS returns "Aucune", "Faible", "Moyenne", "Haute"
-              task.important = (v==='Haute'||v==='true'||v==='1');
+          var segments = line.slice(pipeIdx+1).split('|');
+          segments.forEach(function(seg){
+            seg = seg.trim();
+            var colonIdx = seg.indexOf(':');
+            if (colonIdx === -1) return;
+            var k = seg.slice(0, colonIdx).trim().toLowerCase();
+            var v = seg.slice(colonIdx+1).trim();
+            if (!v || v==='' || v==='null' || v==='undefined' || v==='(null)') return;
+            if (k==='date') {
+              // Full ISO 8601: 2026-05-08T09:30:00
+              var isoFull = v.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+              if (isoFull) {
+                task.targetDate = isoFull[1];
+                if (isoFull[2] !== '00:00') task.targetTime = isoFull[2];
+                return;
+              }
+              // Date only: 2026-05-08
+              var isoDate = v.match(/(\d{4}-\d{2}-\d{2})/);
+              if (isoDate) { task.targetDate = isoDate[1]; return; }
+              // French format fallback: "8 mai 2026 à 00:00"
+              var months = {'janv':1,'févr':2,'mars':3,'avr':4,'mai':5,'juin':6,'juil':7,'août':8,'sept':9,'oct':10,'nov':11,'déc':12};
+              var frMatch = v.match(/(\d+)\s+(\w+)\.?\s+(\d{4})(?:\s+à\s+(\d{2}:\d{2}))?/);
+              if (frMatch) {
+                var m = months[frMatch[2].toLowerCase().slice(0,4)];
+                if (m) {
+                  task.targetDate = frMatch[3]+'-'+String(m).padStart(2,'0')+'-'+String(frMatch[1]).padStart(2,'0');
+                  if (frMatch[4] && frMatch[4] !== '00:00') task.targetTime = frMatch[4];
+                }
+              }
             }
+            if (k==='important') task.important = (v==='Haute'||v==='true'||v==='1'||v==='high');
             if (k==='notes') task.infos = v;
-            if (k==='recurrence') task.recurrence = v;
           });
         }
 
@@ -1237,6 +1254,29 @@ document.querySelectorAll('.modal-overlay').forEach(function(m){
 });
 
 renderRitual();
+
+// One-time cleanup: fix task titles imported with pipe pollution
+(function cleanupTitles() {
+  var changed = false;
+  tasks.forEach(function(t) {
+    var pipeIdx = t.title.indexOf('|');
+    if (pipeIdx !== -1) {
+      var cleanTitle = t.title.slice(0, pipeIdx).trim();
+      if (cleanTitle) {
+        // Try to extract date from polluted title
+        var dateMatch = t.title.match(/date:\s*(\d+)\s+(\w+)\.?\s+(\d{4})/i);
+        if (dateMatch && !t.targetDate) {
+          var months = {'janv':1,'févr':2,'mars':3,'avr':4,'mai':5,'juin':6,'juil':7,'août':8,'sept':9,'oct':10,'nov':11,'déc':12};
+          var m = months[dateMatch[2].toLowerCase().slice(0,4)];
+          if (m) t.targetDate = dateMatch[3]+'-'+String(m).padStart(2,'0')+'-'+String(dateMatch[1]).padStart(2,'0');
+        }
+        t.title = cleanTitle;
+        changed = true;
+      }
+    }
+  });
+  if (changed) save();
+})();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
