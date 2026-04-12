@@ -541,7 +541,7 @@ function renderRitualStep() {
     +'<div style="font-size:12px;color:var(--text3);margin-bottom:10px">'+(ritualIdx+1)+' / '+total+' a classifier</div>'
     +'<div class="progress-bar"><div class="progress-fill" style="width:'+pct+'%"></div></div>'
     +'<div class="ritual-card">'
-    +'<div class="ritual-task-name">'+t.title+'</div>'
+    +'<input class="modal-input" id="ritual-title-input" value="'+t.title.replace(/"/g,'&quot;')+'" style="font-size:17px;font-weight:500;margin-bottom:18px;line-height:1.4;border-color:transparent;padding-left:0;background:transparent" onfocus="this.style.borderColor=\'#378ADD\'" onblur="this.style.borderColor=\'transparent\'" oninput="ritualQueue[ritualIdx].title=this.value"/>'
     +(t.infos?'<div style="font-size:12px;color:var(--text2);background:var(--page);border:1px solid var(--border);border-radius:4px;padding:4px 8px;margin-bottom:14px">'+t.infos+'</div>':'')
     +'<div class="ritual-section"><div class="ritual-question">Cette tache est-elle importante ?</div>'
     +'<div class="btn-group">'
@@ -577,6 +577,9 @@ function validateRitual() {
   if(!ritualState.duration){alert('Indique une duree.');return;}
   var t=ritualQueue[ritualIdx];
   var idx=tasks.findIndex(function(x){return x.id===t.id;});
+  // Save edited title if changed
+  var titleInp=document.getElementById('ritual-title-input');
+  if(titleInp&&titleInp.value.trim()) tasks[idx].title=titleInp.value.trim();
   tasks[idx].important=ritualState.important;
   tasks[idx].urgent=ritualState.urgent;
   tasks[idx].duration=ritualState.duration;
@@ -666,19 +669,8 @@ function renderMatrix() {
 
   function qBlock(q,cls,title,action) {
     var list=qs[q].map(function(t){
-      var subs=getSubtasks(t.id);
-      var tagsBadges=(t.tags||[]).map(function(tg){return '<span class="tag-badge">'+tg+'</span>';}).join('');
-      var recLbl=recurrenceLabel(t);
-      return '<div class="q-task-item">'
+      return '<div class="q-task-item" onclick="openEditModal(\''+t.id+'\')" style="cursor:pointer">'
         +'<div class="q-task-name">'+t.title+(t.tiroir?' ◎':'')+(t.status==='encours'?' <span class="status-encours">En cours</span>':'')+'</div>'
-        +((t.tags||[]).length||recLbl?'<div style="margin-bottom:4px">'+tagsBadges+(recLbl?'<span class="recurrence-badge">'+recLbl+'</span>':'')+'</div>':'')
-        +'<div class="q-act-row">'
-        +'<button class="q-btn '+(t.status==='encours'?'encours':'')+'" onclick="openSuivi(\''+t.id+'\')">En cours</button>'
-        +'<button class="q-btn valid" onclick="validerTask(\''+t.id+'\')">Validee</button>'
-        +'<button class="q-btn suppr" onclick="supprimerTask(\''+t.id+'\')">Suppr.</button>'
-        +'<button class="q-btn" onclick="openEditModal(\''+t.id+'\')">&#9998;</button>'
-        +'</div>'
-        +(subs.length>0?'<div style="margin-top:4px;padding-left:4px;border-left:2px solid rgba(0,0,0,.1)">'+subs.map(function(s){return'<div style="font-size:11px;padding:2px 0;display:flex;gap:4px;align-items:center"><span style="cursor:pointer" onclick="validerTask(\''+s.id+'\')">&#9675;</span> '+s.title+'</div>';}).join('')+'</div>':'')
         +'</div>';
     }).join('')||'<div style="font-size:12px;opacity:.4;padding:4px 0">Aucune tache</div>';
     return'<div class="quadrant '+cls+'"><div class="quadrant-title">'+title+'</div><div class="quadrant-action">'+action+'</div>'+list+'</div>';
@@ -951,6 +943,13 @@ function openEditModal(id) {
   renderTagBtns('edit-tags-btns',editTags,'edit');
   renderEditSubtasks(id);
   document.getElementById('modal-edit').classList.add('open');
+  // Force title value after modal is visible
+  setTimeout(function(){
+    var titleEl = document.getElementById('edit-title');
+    titleEl.value = t.title;
+    titleEl.removeAttribute('readonly');
+    titleEl.removeAttribute('disabled');
+  }, 50);
 }
 
 function renderEditBtns() {
@@ -1037,7 +1036,8 @@ function setE(key,val,btn) {
 function saveEdit() {
   var t=tasks.find(function(x){return x.id===editId;});
   if(!t)return;
-  t.title=document.getElementById('edit-title').value.trim()||t.title;
+  var newTitle = document.getElementById('edit-title').value.trim();
+  if (newTitle) t.title = newTitle;
   t.infos=document.getElementById('edit-infos').value.trim()||null;
   t.important=editImp;t.urgent=editUrg;t.duration=editDur;
   t.tags=editTags.slice();
@@ -1125,33 +1125,45 @@ function importFromClipboard() {
   navigator.clipboard.readText().then(function(text){
     if (!text||!text.trim()) { alert('Presse-papiers vide. Lance d\'abord le Raccourci.'); return; }
     try {
-      // Try JSON first (future full sync)
+      // Try JSON first
       var d = JSON.parse(text);
       processImport(text);
     } catch(e) {
-      // Plain text format from simple Shortcut: one reminder per line
+      // Rich text format: one reminder per line
+      // Format: "Titre | date:2026-04-20 | urgent:true | important:true"
+      // Or simple: just the title
       var lines = text.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
-      if (lines.length===0) { alert('Aucun rappel trouve dans le presse-papiers.'); return; }
+      if (lines.length===0) { alert('Aucun rappel trouve.'); return; }
 
-      // Find existing titles to avoid duplicates
       var existingTitles = {};
       tasks.forEach(function(t){ existingTitles[t.title.toLowerCase()] = true; });
 
       var added = 0;
       lines.forEach(function(line){
-        // Skip if already exists
-        if (existingTitles[line.toLowerCase()]) return;
-        tasks.push({
-          id: uid(),
-          title: line,
-          infos: null,
-          tags: [],
-          done: false,
-          status: 'todo',
-          postponeCount: 0,
-          createdAt: today(),
-          updatedAt: today()
-        });
+        // Parse rich format
+        var parts = line.split(' | ');
+        var title = parts[0].trim();
+        if (!title || existingTitles[title.toLowerCase()]) return;
+
+        var task = {
+          id: uid(), title: title, infos: null, tags: [],
+          done: false, status: 'todo', postponeCount: 0,
+          createdAt: today(), updatedAt: today()
+        };
+
+        // Parse optional fields
+        for (var i=1; i<parts.length; i++) {
+          var kv = parts[i].split(':');
+          if (kv.length < 2) continue;
+          var k = kv[0].trim(), v = kv.slice(1).join(':').trim();
+          if (k==='date' && v) task.targetDate = v.slice(0,10);
+          if (k==='urgent') task.urgent = v==='true'||v==='1';
+          if (k==='important') task.important = v==='true'||v==='1';
+          if (k==='notes' && v) task.infos = v;
+          if (k==='recurrence' && v) task.recurrence = v;
+        }
+
+        tasks.push(task);
         added++;
       });
 
