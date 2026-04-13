@@ -1,5 +1,5 @@
-const CACHE = 'taches-v1';
-const ASSETS = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'taches-v2';
+const ASSETS = ['/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', function(e) {
   e.waitUntil(
@@ -22,6 +22,20 @@ self.addEventListener('activate', function(e) {
 });
 
 self.addEventListener('fetch', function(e) {
+  var url = new URL(e.request.url);
+
+  // Never cache API calls or the main HTML — always fetch fresh
+  if (url.pathname.startsWith('/api/') || url.pathname === '/' || url.pathname === '/index.html') {
+    e.respondWith(
+      fetch(e.request).catch(function() {
+        // Offline fallback for main page
+        return caches.match('/index.html');
+      })
+    );
+    return;
+  }
+
+  // Cache-first for static assets (icons, manifest)
   e.respondWith(
     caches.match(e.request).then(function(cached) {
       return cached || fetch(e.request).then(function(response) {
@@ -30,8 +44,6 @@ self.addEventListener('fetch', function(e) {
           return response;
         });
       });
-    }).catch(function() {
-      return caches.match('/index.html');
     })
   );
 });
